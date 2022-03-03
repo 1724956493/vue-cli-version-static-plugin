@@ -4,7 +4,8 @@
  *  */
 const fs = require("fs-extra");
 const path = require("path");
-const isProd = process.env.NODE_ENV === "prod" || process.env.NODE_ENV === "production";
+const isProd =
+  process.env.NODE_ENV === "prod" || process.env.NODE_ENV === "production";
 //版本号
 module.exports.VersionCode = generatorVersionCode();
 
@@ -32,55 +33,90 @@ module.exports.VersionPlugin = class VersionPlugin {
       versionControl: true,
       to: "public/config/index.js",
       from: `config/index-${process.env.NODE_ENV}.js`,
-      ...option
+      ...option,
     };
   }
   apply(compiler) {
+    const vueConfig = getVueConfig();
     process.env.PublicPath = compiler.options.output.publicPath;
-    process.env.StaticAssetsDir = getStaticAssetsDir();
+    process.env.StaticAssetsDir = vueConfig.assetsDir || "";
     process.env.VersionPluginOption = this.option;
     // js css 中对静态文件路径替换规则
     process.env.RegExpStr = `(?<=['"\`(])\\s*/${this.option.publicStaticFolderName}/`;
     // js css 中对静态文件路径替换的目标路径
     process.env.JsCssStaticReplaceDir = path
-      .join("/", process.env.PublicPath, process.env.StaticAssetsDir, this.option.merge ? "" : this.option.publicStaticFolderName, "/")
+      .join(
+        "/",
+        process.env.PublicPath,
+        process.env.StaticAssetsDir,
+        this.option.merge ? "" : this.option.publicStaticFolderName,
+        "/"
+      )
       .replace(/\\/g, "/");
-    // 拷贝配置文件
-    if (this.option.versionControl) copyConfigFile({ to: this.option.to, from: this.option.from });
+    // 拷贝配置文件,生产环境直接将配置文件打包到outputDir目录中，开发环境，则复制到public上
+    if (this.option.versionControl)
+      copyConfigFile({
+        to: isProd
+          ? this.option.to.replace("public", vueConfig.outputDir || "dist")
+          : this.option.to,
+        from: this.option.from,
+      });
     //生产环境加载
     if (isProd) {
       // 替换js压缩工具
-      compiler.options.optimization.minimizer = [AddJsStaticDirTerserPlugin(this.option.terserOptions || {})];
+      compiler.options.optimization.minimizer = [
+        AddJsStaticDirTerserPlugin(this.option.terserOptions || {}),
+      ];
       // 修改CopyPlugin 对public中的publicStaticFolderName文件拷贝到对应StaticAssetsDir目录下
       if (process.env.StaticAssetsDir) {
-        compiler.hooks.afterPlugins.tap("updateCopyPluginAndHtmlPlugin", (compiler) => {
-          compiler.options.plugins.forEach((pluginClass) => {
-            if (pluginClass.constructor.name == "CopyPlugin") {
-              let patterns = pluginClass.patterns;
-              patterns[0].ignore.push(path.join(this.option.publicStaticFolderName, "**", "*").replace(/\\/g, "/"));
-              patterns.push({
-                from: path.join("public", this.option.publicStaticFolderName).replace(/\\/g, "/"),
-                to: path.join(process.env.StaticAssetsDir, this.option.merge ? "" : this.option.publicStaticFolderName).replace(/\\/g, "/"),
-                toType: "dir"
-              });
-            }
-            // 设置 HtmlPlugin的inject为false
-            if (pluginClass.constructor.name == "HtmlWebpackPlugin") {
-              pluginClass.options.inject = false;
-            }
-          });
-        });
+        compiler.hooks.afterPlugins.tap(
+          "updateCopyPluginAndHtmlPlugin",
+          (compiler) => {
+            compiler.options.plugins.forEach((pluginClass) => {
+              if (pluginClass.constructor.name == "CopyPlugin") {
+                let patterns = pluginClass.patterns;
+                patterns[0].ignore.push(
+                  path
+                    .join(this.option.publicStaticFolderName, "**", "*")
+                    .replace(/\\/g, "/")
+                );
+                // 对public中的配置文件不做复制，直接通过copyConfigFile复制
+                patterns[0].ignore.push(
+                  path.relative("public", this.option.to)
+                );
+                patterns.push({
+                  from: path
+                    .join("public", this.option.publicStaticFolderName)
+                    .replace(/\\/g, "/"),
+                  to: path
+                    .join(
+                      process.env.StaticAssetsDir,
+                      this.option.merge
+                        ? ""
+                        : this.option.publicStaticFolderName
+                    )
+                    .replace(/\\/g, "/"),
+                  toType: "dir",
+                });
+              }
+              // 设置 HtmlPlugin的inject为false
+              if (pluginClass.constructor.name == "HtmlWebpackPlugin") {
+                pluginClass.options.inject = false;
+              }
+            });
+          }
+        );
       }
       if (this.option.versionControl)
         // 将打包后的js，css 生成动态script，保存到对应assetsDir文件目录下souceMap.js中。
         compiler.hooks.compilation.tap("VersionPlugin", (compilation) => {
           //老版本
           /*  compilation.plugin(
-           "html-webpack-plugin-before-html-processing",
-           function (htmlPluginData) {
-              _this.saveFile(  htmlPluginData.assets);
-           }
-         ); */
+            "html-webpack-plugin-before-html-processing",
+            function (htmlPluginData) {
+               _this.saveFile(  htmlPluginData.assets);
+            }
+          ); */
           // 方法一：htmlWebpackPluginBeforeHtmlProcessing 直接对返回的js和css处理。
           // 方法二 ：htmlWebpackPluginAlterAssetTags 对htmlWebpackPlugin返回的asset进行处理。分为head和body，
           compilation.hooks[methodName].tap(methodName, (htmlPluginData) => {
@@ -89,7 +125,7 @@ module.exports.VersionPlugin = class VersionPlugin {
               methodName == "htmlWebpackPluginAlterAssetTags"
                 ? {
                     head: htmlPluginData.head,
-                    body: htmlPluginData.body
+                    body: htmlPluginData.body,
                   }
                 : htmlPluginData.assets
             );
@@ -103,7 +139,8 @@ function generatorVersionCode() {
   if (isProd) {
     var d = new Date();
     var yy = d.getFullYear().toString().slice(2);
-    var MM = d.getMonth() + 1 >= 10 ? d.getMonth() + 1 : "0" + (d.getMonth() + 1);
+    var MM =
+      d.getMonth() + 1 >= 10 ? d.getMonth() + 1 : "0" + (d.getMonth() + 1);
     var DD = d.getDate() >= 10 ? d.getDate() : "0" + d.getDate();
     var h = d.getHours() >= 10 ? d.getHours() : "0" + d.getHours();
     var mm = d.getMinutes() >= 10 ? d.getMinutes() : "0" + d.getMinutes();
@@ -112,78 +149,82 @@ function generatorVersionCode() {
   } else return "";
 }
 // 获取vue.config.js文件中的配置信息
-function getStaticAssetsDir() {
+function getVueConfig() {
   const vueConfigFilePath = path.resolve(process.cwd(), "vue.config.js");
   if (fs.existsSync(vueConfigFilePath)) {
     const config = require(vueConfigFilePath);
-    return config.assetsDir || "";
+    return config;
   }
-  return "";
+  return {};
 }
 //生成sourceMap文件
 function saveFile(outputDir, assets) {
-  let sourceMapFilePath = path.join(outputDir, process.env.StaticAssetsDir, "/sourceMap.js");
+  let sourceMapFilePath = path.join(
+    outputDir,
+    process.env.StaticAssetsDir,
+    "/sourceMap.js"
+  );
   let loadSource =
     methodName == "htmlWebpackPluginAlterAssetTags"
       ? `
-   var sourceMap= ${JSON.stringify(assets)};
-   (function () {
-    window.onload = function () {
-      sourceMap.head.forEach((tag) => createHtmlTag(tag, "head"));
-      sourceMap.body.forEach((tag) => createHtmlTag(tag, "body"));
-    };
-   })();
-   function createHtmlTag(tagDefinition, position = "head") {
-     let tag = document.createElement(tagDefinition.tagName);
-     Object.keys(tagDefinition.attributes || {}).forEach((attr) => {
-       tag.setAttribute(attr, tagDefinition.attributes[attr]);
-     });
-     document.getElementsByTagName(position)[0].appendChild(tag);
-   }`
+    var sourceMap= ${JSON.stringify(assets)};
+    (function () {
+     window.onload = function () {
+       sourceMap.head.forEach((tag) => createHtmlTag(tag, "head"));
+       sourceMap.body.forEach((tag) => createHtmlTag(tag, "body"));
+     };
+    })();
+    function createHtmlTag(tagDefinition, position = "head") {
+      let tag = document.createElement(tagDefinition.tagName);
+      Object.keys(tagDefinition.attributes || {}).forEach((attr) => {
+        tag.setAttribute(attr, tagDefinition.attributes[attr]);
+      });
+      document.getElementsByTagName(position)[0].appendChild(tag);
+    }`
       : ` var sourceMap= ${JSON.stringify(assets)};
-       ; (function () {
-           //CSS
-           loadSouceCss(sourceMap)
-           //JS
-           loadSouceJs(sourceMap)
-         })()
-       function loadSouceCss(source) {
-         document.getElementsByTagName('html')[0].style.opacity = 0
-         var i = 0
-         var _style = null
-         var createStyles = function () {
-           if (i >= source.css.length) {
-             document.getElementsByTagName('html')[0].style.opacity = 1
-             return
-           }
-           _style = document.createElement('link')
-           _style.href = source.css[i]
-           _style.setAttribute('rel', 'stylesheet')
-           _style.onload = function () {
-             i++
-             createStyles()
-           }
-           document.getElementsByTagName('head')[0].appendChild(_style)
-         }
-         createStyles()
-       }
-       function loadSouceJs(source) {
-         var i = 0
-         var _script = null
-         var createScripts = function () {
-           if (i >= source.js.length) {
-             return
-           }
-           _script = document.createElement('script')
-           _script.src = source.js[i]
-           _script.onload = function () {
-             i++
-             createScripts()
-           }
-           document.getElementsByTagName('body')[0].appendChild(_script)
-         }
-         createScripts()
-       }`;
+        ; (function () {
+            //CSS
+            loadSouceCss(sourceMap)
+            //JS
+            loadSouceJs(sourceMap)
+          })()
+        function loadSouceCss(source) {
+          document.getElementsByTagName('html')[0].style.opacity = 0
+          var i = 0
+          var _style = null
+          var createStyles = function () {
+            if (i >= source.css.length) {
+              document.getElementsByTagName('html')[0].style.opacity = 1
+              return
+            }
+            _style = document.createElement('link')
+            _style.href = source.css[i]
+            _style.setAttribute('rel', 'stylesheet')
+            _style.onload = function () {
+              i++
+              createStyles()
+            }
+            document.getElementsByTagName('head')[0].appendChild(_style)
+          }
+          createStyles()
+        }
+        function loadSouceJs(source) {
+          var i = 0
+          var _script = null
+          var createScripts = function () {
+            if (i >= source.js.length) {
+              return
+            }
+            _script = document.createElement('script')
+            _script.src = source.js[i]
+            _script.onload = function () {
+              i++
+              createScripts()
+            }
+            document.getElementsByTagName('body')[0].appendChild(_script)
+          }
+          createScripts()
+        }`;
   fs.ensureFile(sourceMapFilePath).then(() => {
     fs.writeFileSync(sourceMapFilePath, loadSource);
   });
@@ -198,12 +239,12 @@ function copyConfigFile({ to, from }) {
       data =
         data.toString() +
         `
-// 版本号(年月日时分) 打包时会自动加上
-window.SITE_CONFIG['version'] = '${process.env.StaticAssetsDir}'
-//生产环境可以通过 window.SITE_CONFIG['version']加载指定版本项目
-var script = document.createElement('script')
-script.src = window.SITE_CONFIG['version'] + "/sourceMap.js"
-document.getElementsByTagName('head')[0].appendChild(script)`;
+ // 版本号(年月日时分) 打包时会自动加上
+ window.SITE_CONFIG['version'] = '${process.env.StaticAssetsDir}'
+ //生产环境可以通过 window.SITE_CONFIG['version']加载指定版本项目
+ var script = document.createElement('script')
+ script.src = window.SITE_CONFIG['version'] + "/sourceMap.js"
+ document.getElementsByTagName('head')[0].appendChild(script)`;
     }
     fs.ensureFile(ConfigFile).then(() => {
       fs.writeFileSync(ConfigFile, data);
